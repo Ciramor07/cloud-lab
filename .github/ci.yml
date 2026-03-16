@@ -1,0 +1,79 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t cloud-lab-app ./app
+
+      - name: Verify image exists
+        run: docker images cloud-lab-app
+
+  test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start stack
+        run: docker compose up --build -d
+
+      - name: Wait for services
+        run: |
+          echo "Waiting for stack to be ready..."
+          sleep 15
+
+      - name: Check containers status
+        run: docker compose ps
+
+      - name: Test root endpoint
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/)
+          echo "Status code: $response"
+          if [ "$response" != "200" ]; then
+            echo "FAIL: expected 200"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Test health endpoint
+        run: |
+          response=$(curl -s http://localhost/health)
+          echo "Response: $response"
+          if echo "$response" | grep -q "healthy"; then
+            echo "PASS"
+          else
+            echo "FAIL: DB not healthy"
+            exit 1
+          fi
+
+      - name: Test items endpoint
+        run: |
+          response=$(curl -s http://localhost/items)
+          echo "Response: $response"
+          if echo "$response" | grep -q "Cloud Lab Item 1"; then
+            echo "PASS"
+          else
+            echo "FAIL: items not found"
+            exit 1
+          fi
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
